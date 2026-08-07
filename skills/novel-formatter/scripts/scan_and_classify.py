@@ -47,7 +47,7 @@ def detect_encoding(file_path):
 
 
 def read_file_safe(file_path):
-    encodings = [detect_encoding(file_path), 'utf-8', 'gbk', 'big5', 'ansi']
+    encodings = [detect_encoding(file_path), 'utf-8', 'gbk', 'gb18030', 'big5']
     for enc in encodings:
         if enc is None:
             continue

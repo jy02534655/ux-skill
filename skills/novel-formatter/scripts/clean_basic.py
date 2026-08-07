@@ -11,12 +11,12 @@ import json
 import argparse
 from pathlib import Path
 
-# 修正 P0-1: 增加 ^ 和 $ 锚定，只匹配独立行
+# 修正 P0-1 + P2-1: 增加 (?:\s+.*)? 匹配带标题内容的行
 CHAPTER_REGEX = re.compile(
     r'^\s*(?:'
-    r'第[零一二三四五六七八九十百千万]+[章回节]|'
-    r'第\d+[章回节]|'
-    r'Chapter\s*\d+|CHAPTER\s*\d+|'
+    r'第[零一二三四五六七八九十百千万]+[章回节](?:\s+.*)?|'
+    r'第\d+[章回节](?:\s+.*)?|'
+    r'Chapter\s*\d+(?:\s+.*)?|CHAPTER\s*\d+(?:\s+.*)?|'
     r'[零一二三四五六七八九十百千万]+[、．.]\s*\S+|'
     r'[※☆★●◆◇○■□▲△▶►]+\s*\S+'
     r')\s*$',
@@ -29,9 +29,21 @@ SPECIAL_CHAPTERS = re.compile(
     re.MULTILINE | re.IGNORECASE
 )
 
+# 中文数字映射
+CHINESE_NUM_MAP = {
+    '一': '1', '二': '2', '三': '3', '四': '4', '五': '5',
+    '六': '6', '七': '7', '八': '8', '九': '9', '十': '10',
+    '十一': '11', '十二': '12', '十三': '13', '十四': '14', '十五': '15',
+    '十六': '16', '十七': '17', '十八': '18', '十九': '19', '二十': '20',
+    '二十一': '21', '二十二': '22', '二十三': '23', '二十四': '24', '二十五': '25',
+    '二十六': '26', '二十七': '27', '二十八': '28', '二十九': '29', '三十': '30',
+    '一百': '100', '一千': '1000', '一万': '10000',
+    '零': '0'
+}
+
 
 def smart_punct_convert(text):
-    """修正 P0-2: 标点转换保护小数点、网址、英文缩写、省略号"""
+    """标点转换保护小数点、网址、英文缩写、省略号"""
     protected = []
     
     def protect(m):
@@ -82,7 +94,7 @@ def clean_text(text):
         prev_empty = is_empty
     text = '\n'.join(cleaned_lines)
     
-    # 修正 P1-2: 删除行内所有制表符和多余空格（中文小说不需要英文单词间空格）
+    # 删除行内所有制表符和多余空格
     text = re.sub(r'[ \t]+', '', text)
     
     # 智能标点转换
@@ -91,51 +103,54 @@ def clean_text(text):
     return text
 
 
-def normalize_chapters(text):
-    """
-    规整层章节标准化：只做格式转换，不重新编号
-    例："第一章" -> "第1章"，"CHAPTER 5" -> "第5章"
-    """
-    # 中文数字转阿拉伯数字（简化版，只处理常见情况）
-    chinese_num_map = {
-        '一': '1', '二': '2', '三': '3', '四': '4', '五': '5',
-        '六': '6', '七': '7', '八': '8', '九': '9', '十': '10',
-        '十一': '11', '十二': '12', '十三': '13', '十四': '14', '十五': '15',
-        '十六': '16', '十七': '17', '十八': '18', '十九': '19', '二十': '20'
-    }
+def replace_chapter(match):
+    """将章节标题格式化为 第X章 标题 格式，保留原标题内容"""
+    full = match.group(0).strip()
     
-    def replace_chapter(match):
-        full = match.group(0)
-        # 提取章节号
-        num_match = re.search(r'第([零一二三四五六七八九十百千万]+)章', full)
-        if num_match:
-            chn = num_match.group(1)
-            if chn in chinese_num_map:
-                new_num = chinese_num_map[chn]
-            else:
-                # 简单处理百千万
-                new_num = chn
-            return f"第{new_num}章"
-        
-        num_match = re.search(r'Chapter\s*(\d+)', full, re.IGNORECASE)
-        if num_match:
-            return f"第{num_match.group(1)}章"
-        
+    # 检查是否为特殊章节
+    if SPECIAL_CHAPTERS.match(full):
         return full
     
-    # 只转换独立行
+    # 匹配 第X章 标题 格式（中文数字或阿拉伯数字）
+    m = re.search(r'第([零一二三四五六七八九十百千万]+|\d+)[章回节](?:\s+(.*))?$', full)
+    if m:
+        num, title = m.group(1), m.group(2) or ''
+        if num in CHINESE_NUM_MAP:
+            num = CHINESE_NUM_MAP[num]
+        if title:
+            return f"第{num}章 {title}"
+        return f"第{num}章"
+    
+    # 匹配 Chapter X 标题 格式
+    m = re.search(r'Chapter\s*(\d+)(?:\s+(.*))?$', full, re.IGNORECASE)
+    if m:
+        num, title = m.group(1), m.group(2) or ''
+        if title:
+            return f"第{num}章 {title}"
+        return f"第{num}章"
+    
+    # 匹配 一、标题 格式
+    m = re.search(r'^([零一二三四五六七八九十百千万]+)[、．.]\s*(.*)$', full)
+    if m:
+        num, title = m.group(1), m.group(2) or ''
+        if num in CHINESE_NUM_MAP:
+            num = CHINESE_NUM_MAP[num]
+        if title:
+            return f"第{num}章 {title}"
+        return f"第{num}章"
+    
+    return full
+
+
+def normalize_chapters(text):
+    """规整层章节标准化：只做格式转换，不重新编号"""
     lines = text.splitlines()
     new_lines = []
     for line in lines:
         if CHAPTER_REGEX.match(line):
-            # 检查是否为特殊章节
-            if SPECIAL_CHAPTERS.match(line):
-                new_lines.append(line)
-            else:
-                new_lines.append(replace_chapter(line))
+            new_lines.append(replace_chapter(line))
         else:
             new_lines.append(line)
-    
     return '\n'.join(new_lines)
 
 
@@ -151,7 +166,6 @@ def process_file(input_path, output_path):
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(final)
     
-    # 统计章节数
     matches = CHAPTER_REGEX.findall(final)
     return len(matches)
 
@@ -189,7 +203,6 @@ def batch_process(source_dir, output_dir):
             print(f"处理失败: {rel_path} - {e}")
             results.append({'path': rel_path, 'status': 'error', 'error': str(e)})
     
-    # 保存处理日志
     with open(progress_dir / 'regular_processed.json', 'w', encoding='utf-8') as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
     

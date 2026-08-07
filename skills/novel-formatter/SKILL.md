@@ -82,12 +82,13 @@ python scripts/chapter_replace.py --extract --input "文件路径"
 python scripts/chapter_replace.py --apply --input "文件路径" --mapping "映射表路径"
 
 C. 混乱层（AI逐本处理）
-1. 用户将小说按 8-10 万字分块（以章节边界优先），保存为 part1.txt、part2.txt...
+1. 用户执行自动分块：
+   python scripts/split_chunks.py --input "小说路径" --output_dir "./chunks/书名" --max_chars 80000
 2. 用户逐块粘贴给 AI，AI 使用 templates/prompt_clean.md 处理
 3. 用户将所有分块放到同一目录，执行合并：
-python scripts/merge_progress.py --merge --chunks_dir "./chunks" --output "./output.txt"
+   python scripts/merge_progress.py --merge --chunks_dir "./chunks/书名" --output "./output.txt"
 4. 用户执行统一重编号：
-python scripts/renumber.py --input "./output.txt" --output "./final.txt"
+   python scripts/renumber.py --input "./output.txt" --output "./final.txt"
 
 D. 超大型文件（>5MB）
 - 在 A/B/C 各层中，文件大小作为独立维度

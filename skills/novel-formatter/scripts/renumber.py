@@ -27,10 +27,7 @@ SPECIAL_CHAPTERS = re.compile(
 
 
 def renumber_chapters(text):
-    """
-    重新编号为 1-N 连续
-    特殊章节（序章、楔子、尾声、后记、番外等）保留原名
-    """
+    """重新编号为 1-N 连续，特殊章节保留原名"""
     # 先找到所有章节标题的位置
     special_positions = []
     regular_positions = []
@@ -48,15 +45,15 @@ def renumber_chapters(text):
     # 从后往前替换避免偏移
     for idx, match in enumerate(reversed(regular_positions), 1):
         old = match.group(0)
-        # 提取原标题中的附加内容（如标题名）
+        # 修正 P2-2: 增加 ^\s* 匹配行首空白
         title_content = re.sub(
-            r'^(?:第[零一二三四五六七八九十百千万]+|\d+)[章回节]\s*', 
+            r'^\s*(?:第[零一二三四五六七八九十百千万]+|\d+)[章回节]\s*', 
             '', 
             old
         )
         new_num = len(regular_positions) - idx + 1
-        if title_content:
-            new_title = f"第{new_num}章 {title_content}"
+        if title_content.strip():
+            new_title = f"第{new_num}章 {title_content.strip()}"
         else:
             new_title = f"第{new_num}章"
         text = text[:match.start()] + new_title + text[match.end():]
