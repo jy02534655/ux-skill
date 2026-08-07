@@ -83,12 +83,12 @@ python scripts/chapter_replace.py --apply --input "文件路径" --mapping "映�
 
 C. 混乱层（AI逐本处理）
 1. 用户执行自动分块：
-   python scripts/split_chunks.py --input "小说路径" --output_dir "./chunks/书名" --max_chars 80000
+python scripts/split_chunks.py --input "小说路径" --output_dir "./chunks/书名" --max_chars 80000
 2. 用户逐块粘贴给 AI，AI 使用 templates/prompt_clean.md 处理
 3. 用户将所有分块放到同一目录，执行合并：
-   python scripts/merge_progress.py --merge --chunks_dir "./chunks/书名" --output "./output.txt"
+python scripts/merge_progress.py --merge --chunks_dir "./chunks/书名" --output "./output.txt"
 4. 用户执行统一重编号：
-   python scripts/renumber.py --input "./output.txt" --output "./final.txt"
+python scripts/renumber.py --input "./output.txt" --output "./final.txt"
 
 D. 超大型文件（>5MB）
 - 在 A/B/C 各层中，文件大小作为独立维度
@@ -118,6 +118,7 @@ AI 读取 .organizer_progress/validation_report.json，向用户汇报校验结�
 | scripts/scan_and_classify.py | 扫描目录、编码检测、分层分析、生成报告 | 无 |
 | scripts/clean_basic.py | 规整层排版清洗 | 需要 regular_list.json |
 | scripts/chapter_replace.py | 提取候选章节 / 根据映射表执行替换 | 需要 AI 返回的映射表 |
+| scripts/split_chunks.py | 自动按章节边界分块（用于混乱层/超大文件） | 无 |
 | scripts/renumber.py | 合并后统一重新编号（1-N连续） | 需要待编号的文本 |
 | scripts/validate.py | 校验最终输出（对比源文件） | 需要源目录和输出目录 |
 | scripts/merge_progress.py | 合并分块结果，恢复断点 | 需要分块文件和进度文件 |
@@ -133,7 +134,7 @@ AI 读取 .organizer_progress/validation_report.json，向用户汇报校验结�
 
 | 异常 | 处理方式 |
 |------|----------|
-| 编码检测失败 | 依次尝试 UTF-8 -> GBK -> Big5 -> ANSI |
+| 编码检测失败 | 依次尝试 UTF-8 -> GBK -> GB18030 -> Big5 |
 | 分块时切断章节 | 回溯到最近的章节标题再切分 |
 | AI 返回格式错误 | 重试3次，仍失败则标记异常并跳过 |
 | 输出字符数变化 >5% | 标记异常，保留原样不输出 |
