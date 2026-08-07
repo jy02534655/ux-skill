@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 半规整层：提取候选章节行，根据映射表执行全文替换
-用法: python chapter_replace.py --input input.txt --output output.txt --mapping mapping.json
+用法: python chapter_replace.py --extract --input input.txt
+      python chapter_replace.py --apply --input input.txt --mapping mapping.json
 """
 
 import os
@@ -11,9 +12,15 @@ import json
 import argparse
 from pathlib import Path
 
-# 候选章节提取正则（宽松）
+# 修正 P1-5: 更严格的候选提取正则
 CANDIDATE_REGEX = re.compile(
-    r'^.{0,20}(?:第[零一二三四五六七八九十百千万]+[章回节]|第\d+[章回节]|Chapter\s*\d+|[\(（]?\d+[\)）]|[零一二三四五六七八九十百千万]+[、\.]|[※☆★●◆◇○■□▲△▶►]+).{0,30}$',
+    r'^\s*(?:'
+    r'第[零一二三四五六七八九十百千万]+[章回节](?:\s+.*)?|'
+    r'第\d+[章回节](?:\s+.*)?|'
+    r'Chapter\s*\d+(?:\s+.*)?|'
+    r'[零一二三四五六七八九十百千万]+[、．.]\s*\S+|'
+    r'[※☆★●◆◇○■□▲△▶►]+\s*\S+'
+    r')\s*$',
     re.MULTILINE | re.IGNORECASE
 )
 
@@ -23,39 +30,59 @@ def extract_candidates(text):
     lines = text.splitlines()
     candidates = []
     for i, line in enumerate(lines):
-        stripped = line.strip()
-        if len(stripped) < 2:
-            continue
-        if CANDIDATE_REGEX.search(line):
-            candidates.append({
-                'index': i,
-                'line': stripped,
-                'context': lines[max(0, i-1):min(len(lines), i+2)]
-            })
+        if CANDIDATE_REGEX.match(line):
+            stripped = line.strip()
+            if len(stripped) >= 2:
+                candidates.append({
+                    'index': i,
+                    'line': stripped,
+                    'context': '\n'.join(lines[max(0, i-1):min(len(lines), i+2)])
+                })
     return candidates
 
 
 def apply_mapping(text, mapping):
-    """根据映射表替换章节标题"""
-    # mapping: [{"original": "...", "new": "第X章"}, ...]
-    # 从后往前替换避免偏移
+    """修正 P1-5: 更健壮的替换"""
     for item in reversed(mapping):
-        orig = item['original'].strip()
-        new = item['new']
-        # 用正则替换，只替换独立行
-        pattern = re.compile(r'^' + re.escape(orig) + r'$', re.MULTILINE)
+        orig = item.get('original', '').strip()
+        new = item.get('new', '')
+        if not orig or not new:
+            continue
+        pattern = re.compile(r'^\s*' + re.escape(orig) + r'\s*$', re.MULTILINE)
         text = pattern.sub(new, text)
     return text
 
 
-def process_file(input_path, output_path, mapping_path):
+def process_extract(input_path):
+    """提取候选章节行"""
+    with open(input_path, 'r', encoding='utf-8', errors='ignore') as f:
+        content = f.read()
+    
+    candidates = extract_candidates(content)
+    
+    output_path = Path(input_path).parent / f"{Path(input_path).stem}_candidates.txt"
+    with open(output_path, 'w', encoding='utf-8') as f:
+        f.write(f"共提取 {len(candidates)} 个候选章节行\n")
+        f.write("="*50 + "\n\n")
+        for c in candidates:
+            f.write(f"行号: {c['index']}\n")
+            f.write(f"内容: {c['line']}\n")
+            f.write(f"上下文:\n{c['context']}\n")
+            f.write("-"*30 + "\n")
+    
+    print(f"提取完成: {output_path}")
+    print(f"候选行数: {len(candidates)}")
+    return candidates
+
+
+def process_apply(input_path, mapping_path, output_path=None):
+    """应用映射表执行替换"""
     with open(input_path, 'r', encoding='utf-8', errors='ignore') as f:
         content = f.read()
     
     with open(mapping_path, 'r', encoding='utf-8') as f:
         mapping_data = json.load(f)
     
-    # 提取映射表
     mapping = mapping_data.get('mapping', [])
     if not mapping:
         print("映射表为空，直接复制原文件")
@@ -63,21 +90,38 @@ def process_file(input_path, output_path, mapping_path):
     else:
         final = apply_mapping(content, mapping)
     
+    if output_path is None:
+        output_path = Path(input_path).parent / f"{Path(input_path).stem}_processed.txt"
+    else:
+        output_path = Path(output_path)
+    
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(final)
     
-    print(f"处理完成，共替换 {len(mapping)} 个章节")
+    print(f"处理完成: {output_path}")
+    print(f"替换章节数: {len(mapping)}")
 
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument('--extract', action='store_true', help='提取候选章节行')
+    parser.add_argument('--apply', action='store_true', help='应用映射表执行替换')
     parser.add_argument('--input', required=True, help='输入文件路径')
-    parser.add_argument('--output', required=True, help='输出文件路径')
-    parser.add_argument('--mapping', required=True, help='映射表JSON文件路径')
+    parser.add_argument('--mapping', help='映射表JSON文件路径')
+    parser.add_argument('--output', help='输出文件路径')
     args = parser.parse_args()
     
-    process_file(Path(args.input), Path(args.output), Path(args.mapping))
+    if args.extract:
+        process_extract(Path(args.input))
+    elif args.apply:
+        if not args.mapping:
+            print("请指定 --mapping")
+            sys.exit(1)
+        process_apply(Path(args.input), Path(args.mapping), 
+                      Path(args.output) if args.output else None)
+    else:
+        print("请指定 --extract 或 --apply")
 
 
 if __name__ == '__main__':

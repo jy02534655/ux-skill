@@ -1,25 +1,26 @@
 #!/usr/bin/env python3
 """
 合并分块结果，支持断点续传
-用法: python merge_progress.py --book 射雕英雄传 --chunks ./chunks --output ./output
+用法: python merge_progress.py --merge --chunks_dir ./chunks --output ./output.txt
+      python merge_progress.py --status --chunks_dir ./chunks
 """
 
 import os
+import re
 import sys
 import json
-import re
 import argparse
 from pathlib import Path
-from datetime import datetime
+
+
+PROGRESS_PATTERN = re.compile(r'【进度】[^\n]*')
 
 
 def load_progress(progress_file):
-    """读取进度文件"""
     if not progress_file.exists():
         return {
             'book_name': '',
             'category': '',
-            'last_chapter': 0,
             'processed_segments': [],
             'total_segments': 0
         }
@@ -32,51 +33,53 @@ def save_progress(progress_file, progress):
         json.dump(progress, f, ensure_ascii=False, indent=2)
 
 
-def merge_chunks(chunk_files, output_path, progress_file=None):
+def extract_segment_id(path):
+    name = path.stem
+    match = re.search(r'part(\d+)', name, re.IGNORECASE)
+    if match:
+        return int(match.group(1))
+    return 0
+
+
+def parse_progress_mark(content):
+    """修正 P1-3: 更健壮的进度标记解析"""
+    match = PROGRESS_PATTERN.search(content)
+    if match:
+        mark = match.group(0)
+        # 提取章节号
+        chapter_match = re.search(r'已处理到第(\d+)章', mark)
+        if chapter_match:
+            return chapter_match.group(1), mark
+        # 提取章节列表
+        list_match = re.search(r'章节列表=([^\s|]+)', mark)
+        if list_match:
+            return list_match.group(1), mark
+    return None, None
+
+
+def merge_chunks(chunk_files, output_path, progress_dir=None):
     """合并分块文件"""
-    progress = load_progress(progress_file) if progress_file else None
-    
-    # 按片段序号排序
-    def extract_segment_id(path):
-        # 从文件名提取序号，如 book_part1.txt -> 1
-        name = path.stem
-        match = re.search(r'part(\d+)', name, re.IGNORECASE)
-        if match:
-            return int(match.group(1))
-        return 0
-    
     sorted_files = sorted(chunk_files, key=extract_segment_id)
     
-    # 如果存在进度，只合并未处理的部分
-    if progress:
-        processed = set(progress.get('processed_segments', []))
-        sorted_files = [f for f in sorted_files if extract_segment_id(f) not in processed]
-    
-    # 合并
     merged = []
-    chapter_count = progress.get('last_chapter', 0) if progress else 0
+    chapter_list = []
     
     for chunk_file in sorted_files:
         with open(chunk_file, 'r', encoding='utf-8', errors='ignore') as f:
             content = f.read()
-            # 提取进度标记行（以【进度】开头）
-            lines = content.splitlines()
-            if lines and lines[-1].startswith('【进度】'):
-                # 移除进度标记行
-                content = '\n'.join(lines[:-1])
-                # 解析进度
-                match = re.search(r'已处理到第(\d+)章', lines[-1])
-                if match:
-                    chapter_count = int(match.group(1))
-            merged.append(content)
             
-            if progress_file:
-                # 更新进度
-                seg_id = extract_segment_id(chunk_file)
-                if seg_id not in progress.get('processed_segments', []):
-                    progress['processed_segments'].append(seg_id)
-                    progress['last_chapter'] = chapter_count
-                    save_progress(progress_file, progress)
+            # 提取进度标记（修正 P1-3: 使用更健壮的解析）
+            chapter_info, progress_mark = parse_progress_mark(content)
+            if progress_mark:
+                # 移除进度标记行
+                content = content.replace(progress_mark, '')
+                # 清理多余空行
+                content = re.sub(r'\n{3,}', '\n\n', content)
+            
+            if chapter_info:
+                chapter_list.append(chapter_info)
+            
+            merged.append(content.strip())
     
     # 写入最终文件
     final_content = '\n\n'.join(merged)
@@ -85,42 +88,50 @@ def merge_chunks(chunk_files, output_path, progress_file=None):
         f.write(final_content)
     
     print(f"合并完成: {output_path}")
-    print(f"总章节数: {chapter_count}")
+    print(f"分块数: {len(sorted_files)}")
+    if chapter_list:
+        print(f"章节信息: {', '.join(chapter_list[:10])}" + 
+              (f" ... 共{len(chapter_list)}个" if len(chapter_list) > 10 else ""))
 
 
-def extract_chapters(text):
-    """从已合并文本中提取章节映射"""
-    pattern = re.compile(r'^第\d+章', re.MULTILINE)
-    matches = pattern.findall(text)
-    chapters = []
-    for m in matches:
-        num = re.search(r'\d+', m)
-        if num:
-            chapters.append(int(num.group()))
-    return chapters
+def show_status(chunks_dir):
+    """显示分块状态"""
+    chunks_path = Path(chunks_dir)
+    files = list(chunks_path.glob('*part*.txt'))
+    print(f"分块目录: {chunks_dir}")
+    print(f"分块文件数: {len(files)}")
+    for f in sorted(files, key=extract_segment_id):
+        size = f.stat().st_size
+        print(f"  {f.name} ({size/1024:.1f}KB)")
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--book', required=True, help='书名')
-    parser.add_argument('--category', required=True, help='分类名')
+    parser.add_argument('--merge', action='store_true', help='合并分块')
+    parser.add_argument('--status', action='store_true', help='显示分块状态')
     parser.add_argument('--chunks_dir', required=True, help='分块文件目录')
-    parser.add_argument('--output', required=True, help='输出文件路径')
+    parser.add_argument('--output', help='输出文件路径')
     parser.add_argument('--progress_dir', default='./.organizer_progress', help='进度目录')
     args = parser.parse_args()
     
-    # 查找分块文件
     chunks_path = Path(args.chunks_dir)
-    chunk_files = list(chunks_path.glob(f'{args.book}_part*.txt'))
-    
-    if not chunk_files:
-        print(f"未找到 {args.book} 的分块文件")
+    if not chunks_path.exists():
+        print(f"分块目录不存在: {args.chunks_dir}")
         return
     
-    # 进度文件
-    progress_file = Path(args.progress_dir) / f'{args.book}.progress'
-    
-    merge_chunks(chunk_files, Path(args.output), progress_file)
+    if args.status:
+        show_status(args.chunks_dir)
+    elif args.merge:
+        if not args.output:
+            print("请指定 --output")
+            return
+        chunk_files = list(chunks_path.glob('*part*.txt'))
+        if not chunk_files:
+            print(f"未找到分块文件")
+            return
+        merge_chunks(chunk_files, Path(args.output), Path(args.progress_dir))
+    else:
+        print("请指定 --merge 或 --status")
 
 
 if __name__ == '__main__':

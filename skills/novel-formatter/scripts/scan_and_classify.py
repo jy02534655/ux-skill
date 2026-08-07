@@ -17,14 +17,11 @@ import random
 
 # ============ 配置 ============
 CHAPTER_PATTERNS = [
-    r'第[零一二三四五六七八九十百千万]+章',
-    r'第\d+章',
-    r'Chapter\s*\d+',
-    r'第[零一二三四五六七八九十百千万]+节',
-    r'第\d+节',
-    r'[\(（]?\d+[\)）]',
-    r'[零一二三四五六七八九十百千万]+[、\. ]',
-    r'[※☆★●◆◇○■□▲△▶►]',
+    r'^第[零一二三四五六七八九十百千万]+[章回节]',
+    r'^第\d+[章回节]',
+    r'^Chapter\s*\d+',
+    r'^[零一二三四五六七八九十百千万]+[、．.]\s*\S+',
+    r'^[※☆★●◆◇○■□▲△▶►]+\s*\S+',
 ]
 
 POLLUTION_PATTERNS = [
@@ -62,15 +59,23 @@ def read_file_safe(file_path):
     raise ValueError(f"无法读取文件: {file_path}")
 
 
-def detect_chapter_format(text, sample_size=50):
+def detect_chapter_format(text):
+    """修正 P1-1: 采样跳过前20行元信息"""
     lines = text.splitlines()
-    if len(lines) < sample_size:
+    if len(lines) <= 20:
         sample_lines = lines
     else:
-        sample_lines = lines[:sample_size]
-        if len(lines) > sample_size:
-            random_indices = random.sample(range(sample_size, len(lines)), min(20, len(lines)-sample_size))
-            sample_lines.extend([lines[i] for i in random_indices])
+        # 跳过前20行（通常是书名、作者、简介）
+        remaining = lines[20:]
+        sample_size = min(200, len(remaining))
+        sample_lines = remaining[:sample_size]
+        
+        if len(remaining) > sample_size:
+            random_indices = random.sample(
+                range(sample_size, len(remaining)),
+                min(50, len(remaining) - sample_size)
+            )
+            sample_lines.extend([remaining[i] for i in random_indices])
     
     matched = 0
     for line in sample_lines:
@@ -106,9 +111,12 @@ def scan_file(file_path):
         total_lines = len(lines)
         non_empty_lines = len([l for l in lines if l.strip()])
         
+        # 修正 P2-4: 边界情况处理
         if chapter_match_rate > 0.8 and pollution_rate < 0.01:
             layer = 'regular'
-        elif chapter_match_rate > 0.5 or pollution_rate < 0.05:
+        elif chapter_match_rate == 0 and pollution_rate < 0.01:
+            layer = 'regular'  # 无章节短篇，直接排版即可
+        elif chapter_match_rate > 0.5 or (pollution_rate < 0.05 and chapter_match_rate > 0):
             layer = 'semi_regular'
         else:
             layer = 'chaotic'
@@ -210,7 +218,8 @@ def generate_report(results, output_dir):
         'output_dir': str(output_dir),
         'stats': stats,
         'by_layer': {
-            layer: [{'path': r['relative_path'], 'size': r.get('size_kb', 0)} 
+            layer: [{'path': r['relative_path'], 'size': r.get('size_kb', 0), 
+                     'chapters': r.get('chapter_match_rate', 0)} 
                     for r in files]
             for layer, files in by_layer.items()
         },

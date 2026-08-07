@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-校验最终输出
-用法: python validate.py
+校验最终输出（对比源文件和输出文件）
+用法: python validate.py --source ./NovelLibrary --output ./NovelLibrary_Processed
 """
 
 import os
@@ -15,14 +15,12 @@ from datetime import datetime
 
 def count_chapters(text):
     """统计章节数并检查连续性"""
-    # 匹配 "第X章" 格式
     pattern = re.compile(r'^第\d+章', re.MULTILINE)
     matches = pattern.findall(text)
     
     if not matches:
         return 0, [], True
     
-    # 提取章节号
     numbers = []
     for m in matches:
         num = re.search(r'\d+', m)
@@ -32,7 +30,6 @@ def count_chapters(text):
     if not numbers:
         return 0, [], True
     
-    # 检查是否从1开始连续
     is_continuous = True
     expected = 1
     for n in numbers:
@@ -44,53 +41,79 @@ def count_chapters(text):
     return len(numbers), numbers, is_continuous
 
 
-def validate_file(file_path):
-    """校验单个文件"""
-    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-        content = f.read()
+def validate_file(source_path, output_path):
+    """修正 P1-4: 同时读取源文件和输出文件进行对比"""
+    try:
+        with open(source_path, 'r', encoding='utf-8', errors='ignore') as f:
+            original = f.read()
+    except Exception as e:
+        return {
+            'file_path': str(output_path),
+            'passed': False,
+            'issues': [f'无法读取源文件: {e}']
+        }
     
-    total_chars = len(content)
-    lines = content.splitlines()
-    non_empty_lines = len([l for l in lines if l.strip()])
+    try:
+        with open(output_path, 'r', encoding='utf-8', errors='ignore') as f:
+            processed = f.read()
+    except Exception as e:
+        return {
+            'file_path': str(output_path),
+            'passed': False,
+            'issues': [f'无法读取输出文件: {e}']
+        }
     
-    chapter_count, chapter_numbers, is_continuous = count_chapters(content)
+    original_chars = len(original)
+    new_chars = len(processed)
+    diff_rate = abs(new_chars - original_chars) / max(original_chars, 1)
+    chars_diff_ok = diff_rate < 0.05
     
-    # 检查标题格式是否统一（所有标题必须为"第X章"）
+    chapter_count, chapter_numbers, is_continuous = count_chapters(processed)
+    
+    # 检查标题格式是否统一
     title_pattern = re.compile(r'^第\d+章$', re.MULTILINE)
-    # 检查是否有其他格式的标题残留
     other_pattern = re.compile(
         r'^(?:第[零一二三四五六七八九十百千万]+[章回节]|Chapter\s*\d+|[\(（]?\d+[\)）]|[零一二三四五六七八九十百千万]+[、\.]|[※☆★●◆◇○■□▲△▶►]+)',
         re.MULTILINE
     )
-    # 排除已经规范化的"第X章"
-    other_matches = [m for m in other_pattern.finditer(content) 
+    other_matches = [m for m in other_pattern.finditer(processed) 
                      if not re.match(r'^第\d+章$', m.group())]
+    
+    # 检查广告残留
+    ad_keywords = ['关注公众号', '添加微信', 'VIP章节', '付费阅读', '最新章节', '请订阅', '求收藏', '打赏', '月票']
+    ad_count = sum(processed.count(kw) for kw in ad_keywords)
     
     issues = []
     if not is_continuous:
         issues.append(f"章节编号不连续: {chapter_numbers[:10]}...")
     if other_matches:
         issues.append(f"发现 {len(other_matches)} 个未规范化的标题残留")
+    if not chars_diff_ok:
+        issues.append(f"字符数变化率 {diff_rate*100:.2f}% 超过5%阈值")
+    if ad_count > 5:
+        issues.append(f"发现 {ad_count} 处疑似广告残留")
     
     return {
-        'file_path': str(file_path),
-        'total_chars': total_chars,
-        'non_empty_lines': non_empty_lines,
+        'file_path': str(output_path),
+        'original_chars': original_chars,
+        'new_chars': new_chars,
+        'diff_rate': round(diff_rate, 4),
+        'chars_diff_ok': chars_diff_ok,
         'chapter_count': chapter_count,
         'is_continuous': is_continuous,
         'has_other_titles': len(other_matches) > 0,
         'other_title_count': len(other_matches),
+        'ad_count': ad_count,
         'issues': issues,
         'passed': len(issues) == 0
     }
 
 
-def validate_all(output_dir):
-    """校验所有输出文件"""
+def validate_all(source_dir, output_dir):
+    source_path = Path(source_dir)
     output_path = Path(output_dir)
     progress_dir = output_path / '.organizer_progress'
     
-    # 读取分类报告，获取所有待处理文件
     classification_file = progress_dir / 'classification.json'
     if not classification_file.exists():
         print("未找到分类报告，请先运行 scan_and_classify.py")
@@ -106,7 +129,15 @@ def validate_all(output_dir):
         rel_path = detail.get('relative_path')
         if not rel_path:
             continue
+        src_file = source_path / rel_path
         out_file = output_path / rel_path
+        if not src_file.exists():
+            results.append({
+                'file_path': rel_path,
+                'passed': False,
+                'issues': ['源文件不存在']
+            })
+            continue
         if not out_file.exists():
             results.append({
                 'file_path': rel_path,
@@ -114,17 +145,18 @@ def validate_all(output_dir):
                 'issues': ['输出文件不存在']
             })
             continue
-        result = validate_file(out_file)
+        result = validate_file(src_file, out_file)
+        result['file_path'] = rel_path
         results.append(result)
     
-    # 统计
     passed = sum(1 for r in results if r.get('passed', False))
     total = len(results)
     
-    # 生成报告
     report_file = progress_dir / 'validation_report.json'
     validation_result = {
         'validate_time': datetime.now().isoformat(),
+        'source_dir': str(source_dir),
+        'output_dir': str(output_dir),
         'total': total,
         'passed': passed,
         'failed': total - passed,
@@ -142,7 +174,6 @@ def validate_all(output_dir):
     print(f"报告已保存: {report_file}")
     print("="*50)
     
-    # 打印失败列表
     failed_items = [r for r in results if not r.get('passed', False)]
     if failed_items:
         print("\n失败文件列表:")
@@ -153,10 +184,11 @@ def validate_all(output_dir):
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument('--source', default='./NovelLibrary')
     parser.add_argument('--output', default='./NovelLibrary_Processed')
     args = parser.parse_args()
     
-    validate_all(args.output)
+    validate_all(args.source, args.output)
 
 
 if __name__ == '__main__':
