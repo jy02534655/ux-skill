@@ -135,7 +135,8 @@ AI 无法直接执行本地脚本或访问用户文件系统，所有脚本需�
 ⚠️ 安全警告：临时目录会被完全清空，请确认不含重要文件！
 
 用户执行：
-python scripts/preprocess_encoding.py --source ./NovelLibrary --temp ./NovelLibrary_Temp
+python scripts/preprocess_encoding.py --source ./NovelLibrary --temp ./NovelLibrary_Temp --force
+# 说明：--force 用于跳过 5 秒确认倒计时，适用于 CI/CD 自动化场景
 
 脚本自动：
 - 遍历 NovelLibrary/ 下所有 .txt 文件
@@ -238,6 +239,7 @@ scripts/renumber.py : 合并后统一重新编号（1-N连续）
 scripts/validate.py : 校验最终输出，依赖临时目录和输出目录
 scripts/merge_progress.py : 合并分块结果，恢复断点
 scripts/progress_manager.py : 全局进度管理，读写 task_progress.json
+scripts/chapter_patterns.py : 公共正则模块，被所有脚本依赖 
 
 ### AI 提示词模板
 
