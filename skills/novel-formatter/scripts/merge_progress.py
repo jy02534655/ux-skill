@@ -14,6 +14,8 @@ from pathlib import Path
 
 
 PROGRESS_PATTERN = re.compile(r'【进度】[^\n]*')
+# 更特殊的上下文注释标记，降低冲突概率
+CONTEXT_PATTERN = re.compile(r'<!--\s*上下文提示[^>]*-->\s*\n?')
 
 
 def load_progress(progress_file):
@@ -42,15 +44,10 @@ def extract_segment_id(path):
 
 
 def parse_progress_mark(content):
-    """修正 P1-3: 更健壮的进度标记解析"""
+    """只识别 章节列表= 格式"""
     match = PROGRESS_PATTERN.search(content)
     if match:
         mark = match.group(0)
-        # 提取章节号
-        chapter_match = re.search(r'已处理到第(\d+)章', mark)
-        if chapter_match:
-            return chapter_match.group(1), mark
-        # 提取章节列表
         list_match = re.search(r'章节列表=([^\s|]+)', mark)
         if list_match:
             return list_match.group(1), mark
@@ -58,44 +55,42 @@ def parse_progress_mark(content):
 
 
 def merge_chunks(chunk_files, output_path, progress_dir=None):
-    """合并分块文件"""
     sorted_files = sorted(chunk_files, key=extract_segment_id)
-    
+
     merged = []
     chapter_list = []
-    
+
     for chunk_file in sorted_files:
         with open(chunk_file, 'r', encoding='utf-8', errors='ignore') as f:
             content = f.read()
-            
-            # 提取进度标记（修正 P1-3: 使用更健壮的解析）
+
+            # 移除上下文注释（使用更精确的模式匹配）
+            content = CONTEXT_PATTERN.sub('', content)
+
+            # 提取进度标记
             chapter_info, progress_mark = parse_progress_mark(content)
             if progress_mark:
-                # 移除进度标记行
                 content = content.replace(progress_mark, '')
-                # 清理多余空行
                 content = re.sub(r'\n{3,}', '\n\n', content)
-            
+
             if chapter_info:
                 chapter_list.append(chapter_info)
-            
+
             merged.append(content.strip())
-    
-    # 写入最终文件
+
     final_content = '\n\n'.join(merged)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(final_content)
-    
+
     print(f"合并完成: {output_path}")
     print(f"分块数: {len(sorted_files)}")
     if chapter_list:
-        print(f"章节信息: {', '.join(chapter_list[:10])}" + 
+        print(f"章节信息: {', '.join(chapter_list[:10])}" +
               (f" ... 共{len(chapter_list)}个" if len(chapter_list) > 10 else ""))
 
 
 def show_status(chunks_dir):
-    """显示分块状态"""
     chunks_path = Path(chunks_dir)
     files = list(chunks_path.glob('*part*.txt'))
     print(f"分块目录: {chunks_dir}")
@@ -113,12 +108,12 @@ def main():
     parser.add_argument('--output', help='输出文件路径')
     parser.add_argument('--progress_dir', default='./.organizer_progress', help='进度目录')
     args = parser.parse_args()
-    
+
     chunks_path = Path(args.chunks_dir)
     if not chunks_path.exists():
         print(f"分块目录不存在: {args.chunks_dir}")
         return
-    
+
     if args.status:
         show_status(args.chunks_dir)
     elif args.merge:

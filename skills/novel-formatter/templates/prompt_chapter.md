@@ -17,8 +17,9 @@
 {
   "book_name": "{{book_name}}",
   "mapping": [
-    {"original": "第一章 初入江湖", "new": "第1章"},
-    {"original": "第2章 风云再起", "new": "第2章"}
+    {"original": "第一章 初入江湖", "new": "第1章 初入江湖"},
+    {"original": "第二章", "new": "第2章"},
+    {"original": "Chapter 3 The Beginning", "new": "第3章 The Beginning"}
   ],
   "total_chapters": 35,
   "skipped": ["误提取的行1", "误提取的行2"]
@@ -26,6 +27,8 @@
 
 【约束】
 - 编号必须连续，从1开始
+- **重要**：`new` 字段必须保留原标题中的文字内容（如标题名），格式为 "第X章 标题内容"
+- 如果原标题只有章节号没有文字内容，则 `new` 只输出 "第X章"
 - 只输出代码块，不添加任何额外解释
-- 如果某行明显不是章节标题，放入 skipped 数组
 - 特殊章节（序章、楔子、尾声、后记、番外）保留原名，不参与编号
+- 最大重试次数：3次。如果连续3次格式错误，请输出 {"error": "max_retries_exceeded"}

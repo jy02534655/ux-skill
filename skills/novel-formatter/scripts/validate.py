@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-校验最终输出（对比源文件和输出文件）
-用法: python validate.py --source ./NovelLibrary --output ./NovelLibrary_Processed
+校验最终输出（对比临时目录和输出目录）
+用法: python validate.py --source ./NovelLibrary_Temp --output ./NovelLibrary_Processed
 """
 
 import os
@@ -12,24 +12,30 @@ import argparse
 from pathlib import Path
 from datetime import datetime
 
+# 导入公共正则
+from chapter_patterns import CHAPTER_PATTERN
+
 
 def count_chapters(text):
-    """统计章节数并检查连续性"""
-    pattern = re.compile(r'^第\d+章', re.MULTILINE)
-    matches = pattern.findall(text)
-    
+    """
+    统计章节数并检查连续性
+    使用公共正则 CHAPTER_PATTERN，支持 章/回/节 三种格式
+    """
+    matches = list(CHAPTER_PATTERN.finditer(text))
+
     if not matches:
         return 0, [], True
-    
+
     numbers = []
     for m in matches:
-        num = re.search(r'\d+', m)
+        line = m.group(0)
+        num = re.search(r'\d+', line)
         if num:
             numbers.append(int(num.group()))
-    
+
     if not numbers:
         return 0, [], True
-    
+
     is_continuous = True
     expected = 1
     for n in numbers:
@@ -37,12 +43,12 @@ def count_chapters(text):
             is_continuous = False
             break
         expected += 1
-    
+
     return len(numbers), numbers, is_continuous
 
 
 def validate_file(source_path, output_path):
-    """修正 P1-4: 同时读取源文件和输出文件进行对比"""
+    """同时读取源文件（临时目录）和输出文件进行对比"""
     try:
         with open(source_path, 'r', encoding='utf-8', errors='ignore') as f:
             original = f.read()
@@ -52,7 +58,7 @@ def validate_file(source_path, output_path):
             'passed': False,
             'issues': [f'无法读取源文件: {e}']
         }
-    
+
     try:
         with open(output_path, 'r', encoding='utf-8', errors='ignore') as f:
             processed = f.read()
@@ -62,27 +68,27 @@ def validate_file(source_path, output_path):
             'passed': False,
             'issues': [f'无法读取输出文件: {e}']
         }
-    
+
     original_chars = len(original)
     new_chars = len(processed)
     diff_rate = abs(new_chars - original_chars) / max(original_chars, 1)
     chars_diff_ok = diff_rate < 0.05
-    
+
     chapter_count, chapter_numbers, is_continuous = count_chapters(processed)
-    
-    # 检查标题格式是否统一
-    title_pattern = re.compile(r'^第\d+章$', re.MULTILINE)
+
+    # 检查标题格式是否统一（使用公共正则检测残留）
     other_pattern = re.compile(
         r'^(?:第[零一二三四五六七八九十百千万]+[章回节]|Chapter\s*\d+|[\(（]?\d+[\)）]|[零一二三四五六七八九十百千万]+[、\.]|[※☆★●◆◇○■□▲△▶►]+)',
         re.MULTILINE
     )
-    other_matches = [m for m in other_pattern.finditer(processed) 
-                     if not re.match(r'^第\d+章$', m.group())]
-    
+    valid_pattern = re.compile(r'^第\d+[章回节]$')
+    other_matches = [m for m in other_pattern.finditer(processed)
+                     if not valid_pattern.match(m.group())]
+
     # 检查广告残留
     ad_keywords = ['关注公众号', '添加微信', 'VIP章节', '付费阅读', '最新章节', '请订阅', '求收藏', '打赏', '月票']
     ad_count = sum(processed.count(kw) for kw in ad_keywords)
-    
+
     issues = []
     if not is_continuous:
         issues.append(f"章节编号不连续: {chapter_numbers[:10]}...")
@@ -92,7 +98,7 @@ def validate_file(source_path, output_path):
         issues.append(f"字符数变化率 {diff_rate*100:.2f}% 超过5%阈值")
     if ad_count > 5:
         issues.append(f"发现 {ad_count} 处疑似广告残留")
-    
+
     return {
         'file_path': str(output_path),
         'original_chars': original_chars,
@@ -113,15 +119,15 @@ def validate_all(source_dir, output_dir):
     source_path = Path(source_dir)
     output_path = Path(output_dir)
     progress_dir = output_path / '.organizer_progress'
-    
+
     classification_file = progress_dir / 'classification.json'
     if not classification_file.exists():
         print("未找到分类报告，请先运行 scan_and_classify.py")
         return
-    
+
     with open(classification_file, 'r', encoding='utf-8') as f:
         report = json.load(f)
-    
+
     results = []
     for detail in report.get('details', []):
         if detail.get('layer') == 'error':
@@ -148,10 +154,10 @@ def validate_all(source_dir, output_dir):
         result = validate_file(src_file, out_file)
         result['file_path'] = rel_path
         results.append(result)
-    
+
     passed = sum(1 for r in results if r.get('passed', False))
     total = len(results)
-    
+
     report_file = progress_dir / 'validation_report.json'
     validation_result = {
         'validate_time': datetime.now().isoformat(),
@@ -162,10 +168,16 @@ def validate_all(source_dir, output_dir):
         'failed': total - passed,
         'details': results
     }
-    
+
     with open(report_file, 'w', encoding='utf-8') as f:
         json.dump(validation_result, f, ensure_ascii=False, indent=2)
-    
+
+    from progress_manager import update_phase
+    update_phase('validate', 'completed',
+                 total=total,
+                 passed=passed,
+                 failed=total-passed)
+
     print("\n" + "="*50)
     print("校验完成")
     print(f"总计: {total} 个文件")
@@ -173,7 +185,7 @@ def validate_all(source_dir, output_dir):
     print(f"失败: {total - passed}")
     print(f"报告已保存: {report_file}")
     print("="*50)
-    
+
     failed_items = [r for r in results if not r.get('passed', False)]
     if failed_items:
         print("\n失败文件列表:")
@@ -184,10 +196,10 @@ def validate_all(source_dir, output_dir):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--source', default='./NovelLibrary')
+    parser.add_argument('--source', default='./NovelLibrary_Temp')
     parser.add_argument('--output', default='./NovelLibrary_Processed')
     args = parser.parse_args()
-    
+
     validate_all(args.source, args.output)
 
 
