@@ -7,10 +7,63 @@
 
 import os
 import json
-import fcntl
 import time
 from pathlib import Path
 from datetime import datetime
+
+try:
+    import fcntl
+    HAS_FCNTL = True
+except ImportError:
+    HAS_FCNTL = False
+
+if not HAS_FCNTL:
+    try:
+        import msvcrt
+        HAS_MSVCRT = True
+    except ImportError:
+        HAS_MSVCRT = False
+else:
+    HAS_MSVCRT = False
+
+
+def _lock_file(lf, exclusive=False):
+    if HAS_FCNTL:
+        flags = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+        flags |= fcntl.LOCK_NB
+        start = time.time()
+        while True:
+            try:
+                fcntl.flock(lf.fileno(), flags)
+                return
+            except BlockingIOError:
+                if time.time() - start > LOCK_TIMEOUT:
+                    raise TimeoutError(f"获取锁超时: {lf.name}")
+                time.sleep(0.1)
+    elif HAS_MSVCRT:
+        # msvcrt 的 locking 是进程级文件锁，兼容 Windows
+        start = time.time()
+        while True:
+            try:
+                msvcrt.locking(lf.fileno(), msvcrt.LK_NBLCK, 1)
+                return
+            except OSError:
+                if time.time() - start > LOCK_TIMEOUT:
+                    raise TimeoutError(f"获取锁超时: {lf.name}")
+                time.sleep(0.1)
+    else:
+        # 无锁降级：直接返回，依赖原子写操作
+        return
+
+
+def _unlock_file(lf):
+    if HAS_FCNTL:
+        fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
+    elif HAS_MSVCRT:
+        try:
+            msvcrt.locking(lf.fileno(), msvcrt.LK_UNLCK, 1)
+        except OSError:
+            pass
 
 
 PROGRESS_FILE = '.organizer_progress/task_progress.json'
@@ -25,21 +78,12 @@ def get_progress():
 
     lock_file = PROGRESS_FILE + '.lock'
     with open(lock_file, 'w') as lf:
-        start = time.time()
-        while True:
-            try:
-                fcntl.flock(lf.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
-                break
-            except BlockingIOError:
-                if time.time() - start > LOCK_TIMEOUT:
-                    raise TimeoutError(f"获取读锁超时: {PROGRESS_FILE}")
-                time.sleep(0.1)
-
+        _lock_file(lf, exclusive=False)
         try:
             with open(PROGRESS_FILE, 'r', encoding='utf-8') as f:
                 return json.load(f)
         finally:
-            fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
+            _unlock_file(lf)
 
 
 def init_progress(source_dir, temp_dir, output_dir):
@@ -74,23 +118,14 @@ def save_progress(progress):
 
     lock_file = PROGRESS_FILE + '.lock'
     with open(lock_file, 'w') as lf:
-        start = time.time()
-        while True:
-            try:
-                fcntl.flock(lf.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except BlockingIOError:
-                if time.time() - start > LOCK_TIMEOUT:
-                    raise TimeoutError(f"获取写锁超时: {PROGRESS_FILE}")
-                time.sleep(0.1)
-
+        _lock_file(lf, exclusive=True)
         try:
             temp_file = PROGRESS_FILE + '.tmp'
             with open(temp_file, 'w', encoding='utf-8') as f:
                 json.dump(progress, f, ensure_ascii=False, indent=2)
             os.replace(temp_file, PROGRESS_FILE)
         finally:
-            fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
+            _unlock_file(lf)
 
 
 def update_phase(phase_name, status, **kwargs):

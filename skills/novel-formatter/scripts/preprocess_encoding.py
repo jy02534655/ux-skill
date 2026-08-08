@@ -157,7 +157,7 @@ def preprocess_all(source_dir, temp_dir, max_workers=4, force=False):
         for i, future in enumerate(as_completed(futures), 1):
             result = future.result()
             results.append(result)
-            status = "✓" if result['success'] else "✗"
+            status = "[OK]" if result['success'] else "[FAIL]"
             enc = result.get('original_encoding', 'unknown')
             print(f"[{i}/{len(files)}] {result['relative_path']} -> {enc} {status}")
 
@@ -186,7 +186,9 @@ def preprocess_all(source_dir, temp_dir, max_workers=4, force=False):
     with open(progress_dir / 'preprocess_report.json', 'w', encoding='utf-8') as f:
         json.dump(report, f, ensure_ascii=False, indent=2)
 
-    from progress_manager import update_phase
+    from progress_manager import update_phase, init_progress
+    if not Path('.organizer_progress/task_progress.json').exists():
+        init_progress(source_dir, temp_dir, Path('./NovelLibrary_Processed'))
     update_phase('preprocess', 'completed',
                  total_files=stats['total'],
                  processed_files=stats['success'],

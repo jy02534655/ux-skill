@@ -128,7 +128,7 @@ AI 无法直接执行本地脚本或访问用户文件系统，所有脚本需�
 - 半规整层：章节匹配率 50%-80% 或（污染度 1%-5% 且 章节匹配率 >0）
 - 混乱层：章节匹配率 <50% 或 污染度 >5%
 
-## Workflow（用户执行）
+## 工作流（用户执行）
 
 ### Step 0: 预处理（统一编码）
 
@@ -136,110 +136,82 @@ AI 无法直接执行本地脚本或访问用户文件系统，所有脚本需�
 
 用户执行：
 python scripts/preprocess_encoding.py --source ./NovelLibrary --temp ./NovelLibrary_Temp --force
-# 说明：--force 用于跳过 5 秒确认倒计时，适用于 CI/CD 自动化场景
 
 脚本自动：
-- 遍历 NovelLibrary/ 下所有 .txt 文件
-- 检测每个文件的编码
-- 统一转为 UTF-8 输出到 NovelLibrary_Temp/，保持目录结构
-- 生成转码报告到 .organizer_progress/task_progress.json
+- 遍历 NovelLibrary/ 下所有 .txt 文件，检测编码，统一转为 UTF-8
+- 输出到 NovelLibrary_Temp/，保持目录结构
+- 生成转码报告
 
 ### Step 1: 扫描与分类
 
 用户执行：
 python scripts/scan_and_classify.py --source ./NovelLibrary_Temp --output ./NovelLibrary_Processed
 
-脚本自动：
-- 读取临时目录下所有文件
-- 计算章节匹配率和文本污染度
-- 分层归类：规整层 / 半规整层 / 混乱层
-- 更新全局进度文件
+脚本自动计算章节匹配率和文本污染度，分层归类。
 
-AI 读取 .organizer_progress/classification.json 报告，向用户汇报：
-- 总文件数
-- 各层级分布
-- 需要 AI 介入的文件列表
+### Step 2: 分层处理
 
-### Step 2: 分层处理（按优先级顺序执行）
+A. 规整层（零AI调用）：python scripts/clean_basic.py --batch
+B. 半规整层：auto_chapter_map.py + chapter_replace.py 自动映射
+C. 混乱层：split_chunks.py → AI逐块清洗 → merge_progress.py → renumber.py
 
-A. 规整层（零AI调用）
-用户执行：
-python scripts/clean_basic.py --batch --source ./NovelLibrary_Temp --output_dir ./NovelLibrary_Processed
-
-进度自动记录到 task_progress.json
-
-B. 半规整层（优先自动映射，杂糅候选再 AI 辅助识别）
-1. 用户执行提取候选章节：
-python scripts/chapter_replace.py --extract --input "NovelLibrary_Temp/分类/书名.txt"
-
-2. 先尝试自动映射：
-python scripts/auto_chapter_map.py --input "NovelLibrary_Temp/分类/书名.txt"
-
-3. 若自动映射失败（脚本返回非0），用户将候选章节行粘贴给 AI，AI 使用 templates/prompt_chapter.md 处理
-
-4. AI 处理完成后，用户执行进度更新：
-python scripts/progress_manager.py --update semi_regular_layer:in_progress --current_file "分类/书名.txt" --processed 15 --total 20
-
-5. 用户保存映射表，执行替换：
-python scripts/chapter_replace.py --apply --input "NovelLibrary_Temp/分类/书名.txt" --mapping "映射表路径"
-
-6. 所有半规整层文件处理完成后：
-python scripts/progress_manager.py --update semi_regular_layer:completed --total 20 --processed 20 --failed 0
-
-C. 混乱层（AI逐本处理）
-1. 用户执行自动分块：
-python scripts/split_chunks.py --input "NovelLibrary_Temp/分类/书名.txt" --output_dir "./chunks/书名" --max_chars 80000
-
-2. 用户逐块粘贴给 AI，AI 使用 templates/prompt_clean.md 处理
-   - AI 输出末尾包含进度标记：【进度】书名=xxx|片段=1|章节列表=第1章,第5章,第12章
-
-3. 每个文件处理完成后，用户执行进度更新：
-python scripts/progress_manager.py --update chaotic_layer:in_progress --current_file "分类/书名.txt" --processed 3 --total 8 --ai_calls 2
-
-4. 用户合并分块：
-python scripts/merge_progress.py --merge --chunks_dir "./chunks/书名" --output "./output.txt"
-
-5. 用户执行统一重编号：
-python scripts/renumber.py --input "./output.txt" --output "NovelLibrary_Processed/分类/书名.txt"
-
-6. 所有混乱层文件处理完成后：
-python scripts/progress_manager.py --update chaotic_layer:completed --total 8 --processed 8 --failed 0
-
-D. 超大型文件（>5MB）
-在各层中单独判断，先分块 -> 处理 -> 合并 -> 重编号
-- 规整层+超大：先分块 -> clean_basic.py 处理 -> 合并 -> renumber.py
-- 半规整+超大：先分块 -> auto_chapter_map.py/AI识别 -> 合并 -> renumber.py
-- 混乱+超大：先分块 -> AI逐块处理 -> 合并 -> renumber.py
+⚠️ 混乱层和半规整层必须走完整的 AI 处理流程，不可使用批量跳过脚本，
+    否则会导致标题格式混乱、元数据残留、首行非章节等质量问题。
 
 ### Step 3: 校验
 
-用户执行：
 python scripts/validate.py --source ./NovelLibrary_Temp --output ./NovelLibrary_Processed
 
-AI 读取 .organizer_progress/validation_report.json，向用户汇报校验结果。
+报告三类问题：
+1. 硬失败：未规范化标题残留、字符变化>10%、广告残留>5处
+2. 连续性告警：章节编号不连续（原文固有结构，不影响 pass/fail）
+3. 质量告警：首行非章节、元数据残留、裸标题（不影响 pass/fail）
 
-## 特殊章节处理策略
+## 章节标题规范化规则
 
-- 序章/楔子/第零章 -> 保留原名，或转为"第0章 序章"（可选）
-- 尾声/后记 -> 保留原名，不参与主编号
-- 番外/外传 -> 保留原名，不参与主编号
-- 第X卷 第Y章 -> 只保留章级别（第Y章），卷信息保留在正文中
+脚本自动识别并转换以下所有格式的章节标题（所有单位统一转为 `章`）：
+
+| 原始格式 | 转换后 | 示例 |
+|---------|--------|------|
+| 第X章/回/节 标题 | 保留 | 第3章 初次相遇 |
+| 第一章/回/节 | 中文数字转阿拉伯 | 第一章 → 第1章 |
+| Chapter X / CHAPTER X | 第X章 | Chapter 5 → 第5章 |
+| （N）/ (N) | 第N章 | （3）→ 第3章 |
+| （一）（二）（三）... | 第1章 第2章 第3章 | （一）→ 第1章 |
+| 【N、标题】/ 【N，标题】 | 第N章 标题 | 【1、初次相遇】→ 第1章 初次相遇 |
+| 一、标题 / 1、标题 | 第1章 标题 | 一、初次相遇 → 第1章 初次相遇 |
+| 第一集/卷/部：标题 | 第1章 标题 | 第一集：初遇 → 第1章 初遇 |
+| 正文 第一章... | 剥离前缀后转换 | 正文 第一章芙蓉出水 → 第1章 芙蓉出水 |
+| 书名（N） | 保留为章节标题 | 楠楠的暴露（五）→ 第5章 |
+
+### 特殊章节（不参与编号，保留原名）
+
+- 序章 / 楔子 / 第零章 / 引子 / 前言 / 引言
+- 尾声 / 后记 / 番外 / 外传 / 跋
+
+### 转换规则
+
+1. 只做格式转换，不重新编号（保留原文的章节数字）
+2. 中文数字一律转为阿拉伯数字（一→1，十→10）
+3. 装饰前缀（☆、※、正文 等）自动剥离
+4. 章节单位（集/卷/部/回）统一转为 "章"
+5. 每章标题独占一行，正文段落间用 1 个空行分隔
 
 ## 可用资源
 
 ### 脚本清单
 
-scripts/preprocess_encoding.py : 统一转码所有文件到 UTF-8 临时目录，无依赖
-scripts/scan_and_classify.py : 扫描临时目录、分层分析、生成报告，依赖临时目录
-scripts/clean_basic.py : 规整层排版清洗，依赖临时目录和 regular_list.json
-scripts/chapter_replace.py : 提取候选章节 / 根据映射表执行替换，依赖临时目录和 AI 映射表
-scripts/auto_chapter_map.py : 半规整层自动映射（零AI处理），依赖临时目录
-scripts/split_chunks.py : 自动按章节边界分块，依赖临时目录
+scripts/preprocess_encoding.py : 统一转码所有文件到 UTF-8
+scripts/scan_and_classify.py : 扫描、分层分析、生成报告
+scripts/clean_basic.py : 规整层排版清洗 + 章节标题标准化（支持全部 10 种格式）
+scripts/chapter_replace.py : 提取候选章节 / 根据映射表执行替换
+scripts/auto_chapter_map.py : 半规整层自动映射（零AI处理）
+scripts/split_chunks.py : 按章节边界自动分块
 scripts/renumber.py : 合并后统一重新编号（1-N连续）
-scripts/validate.py : 校验最终输出，依赖临时目录和输出目录
 scripts/merge_progress.py : 合并分块结果，恢复断点
-scripts/progress_manager.py : 全局进度管理，读写 task_progress.json
-scripts/chapter_patterns.py : 公共正则模块，被所有脚本依赖 
+scripts/progress_manager.py : 全局进度管理
+scripts/validate.py : 校验最终输出（标题格式、连续性、质量、广告）
+scripts/chapter_patterns.py : 公共正则模块，所有脚本依赖。支持 第X章/回/节/集/卷/部、Chapter X、括号（N）（一）、【N、标题】、一、标题、正文前缀剥离
 
 ### AI 提示词模板
 
@@ -248,7 +220,7 @@ templates/prompt_clean.md : 全文清洗，输入片段，输出排版文本
 
 ## 异常处理
 
-编码检测失败：依次尝试 UTF-8 -> GBK -> GB18030 -> Big5
+编码检测失败：依次尝试 UTF-8 → GBK → GB18030 → Big5
 分块时切断章节：回溯到最近的章节标题再切分
 AI 返回格式错误：重试3次，仍失败则标记异常并跳过
 输出字符数变化大于5%：标记异常，保留原样不输出

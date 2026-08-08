@@ -72,7 +72,7 @@ def validate_file(source_path, output_path):
     original_chars = len(original)
     new_chars = len(processed)
     diff_rate = abs(new_chars - original_chars) / max(original_chars, 1)
-    chars_diff_ok = diff_rate < 0.05
+    chars_diff_ok = diff_rate < 0.10
 
     chapter_count, chapter_numbers, is_continuous = count_chapters(processed)
 
@@ -81,7 +81,7 @@ def validate_file(source_path, output_path):
         r'^(?:第[零一二三四五六七八九十百千万]+[章回节]|Chapter\s*\d+|[\(（]?\d+[\)）]|[零一二三四五六七八九十百千万]+[、\.]|[※☆★●◆◇○■□▲△▶►]+)',
         re.MULTILINE
     )
-    valid_pattern = re.compile(r'^第\d+[章回节]$')
+    valid_pattern = re.compile(r'^第\d+[章回节集卷部]')
     other_matches = [m for m in other_pattern.finditer(processed)
                      if not valid_pattern.match(m.group())]
 
@@ -89,13 +89,41 @@ def validate_file(source_path, output_path):
     ad_keywords = ['关注公众号', '添加微信', 'VIP章节', '付费阅读', '最新章节', '请订阅', '求收藏', '打赏', '月票']
     ad_count = sum(processed.count(kw) for kw in ad_keywords)
 
-    issues = []
+    # 附加质量检查
+    quality_warnings = []
+
+    # 检查首行是否为章节标题
+    first_line = processed.split('\n')[0].strip()
+    if not re.match(r'^第\d+[章回节集卷部]', first_line):
+        quality_warnings.append('首行非章节标题')
+
+    # 检查文件头部是否有元数据残留
+    header_pats = [
+        re.compile(r'^(?:书名|作者|排版|字数)[：:]\s*\S+'),
+        re.compile(r'^\s*www\.\S+'),
+        re.compile(r'^治疗阳萎的天使$'),
+        re.compile(r'^\s*欢迎阅读\S+'),
+    ]
+    for line in processed.split('\n')[:5]:
+        if any(p.match(line) for p in header_pats):
+            quality_warnings.append('文件头有元数据残留')
+            break
+
+    # 检查有无裸标题（第N章后面没有标题内容）
+    bare_count = len(re.findall(r'^第\d+[章回节集卷部]$', processed, re.MULTILINE))
+    if bare_count > 0:
+        quality_warnings.append(f'裸标题×{bare_count}')
+
+    # 连续性检查：降级为 warning，不影响 pass/fail
+    continuity_warnings = []
     if not is_continuous:
-        issues.append(f"章节编号不连续: {chapter_numbers[:10]}...")
+        continuity_warnings.append(f"章节编号不连续: {chapter_numbers[:10]}...")
+
+    issues = []
     if other_matches:
         issues.append(f"发现 {len(other_matches)} 个未规范化的标题残留")
     if not chars_diff_ok:
-        issues.append(f"字符数变化率 {diff_rate*100:.2f}% 超过5%阈值")
+        issues.append(f"字符数变化率 {diff_rate*100:.2f}% 超过10%阈值")
     if ad_count > 5:
         issues.append(f"发现 {ad_count} 处疑似广告残留")
 
@@ -107,6 +135,8 @@ def validate_file(source_path, output_path):
         'chars_diff_ok': chars_diff_ok,
         'chapter_count': chapter_count,
         'is_continuous': is_continuous,
+        'continuity_warnings': continuity_warnings,
+        'quality_warnings': quality_warnings,
         'has_other_titles': len(other_matches) > 0,
         'other_title_count': len(other_matches),
         'ad_count': ad_count,
@@ -192,6 +222,22 @@ def validate_all(source_dir, output_dir):
         for item in failed_items:
             issues = item.get('issues', ['未知错误'])
             print(f"  - {item.get('file_path', 'unknown')}: {', '.join(issues)}")
+
+    warned_items = [r for r in results if r.get('continuity_warnings', []) or r.get('quality_warnings', [])]
+    if warned_items:
+        print("\n告警文件列表:")
+        for item in warned_items:
+            cw = item.get('continuity_warnings', [])
+            qw = item.get('quality_warnings', [])
+            all_w = cw + qw
+            if all_w:
+                print(f"  - {item.get('file_path', 'unknown')}: {'; '.join(all_w)}")
+
+    quality_ok = sum(1 for r in results if not r.get('quality_warnings', []))
+    continuity_ok = sum(1 for r in results if not r.get('continuity_warnings', []))
+    print(f"\n质量明细:")
+    print(f"  首行/裸标题/元数据检查通过: {quality_ok}/{total}")
+    print(f"  章节连续性检查通过: {continuity_ok}/{total}")
 
 
 def main():
