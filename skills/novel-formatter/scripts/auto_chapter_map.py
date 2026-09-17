@@ -44,7 +44,7 @@ def build_mapping(candidates):
         line = cand['line']
 
         # 匹配 "第X章 标题" 格式
-        m = re.match(r'^第([零一二三四五六七八九十百千\d]+)[章回节](?:\s+(.*))?$', line)
+        m = re.match(r'^第([零一二三四五六七八九十百千万\d]+)[章回节话](?:\s+(.*))?$', line)
         if m:
             num_str = m.group(1)
             title = m.group(2) or ''
@@ -57,7 +57,7 @@ def build_mapping(candidates):
                 continue
 
         # 匹配 "Chapter X 标题" 格式（修复：保留标题）
-        m = re.match(r'^Chapter\s*(\d+)(?:\s+(.*))?$', line, re.IGNORECASE)
+        m = re.match(r'^(?:Chapter|Section|Part)\s*(\d+)(?:\s+(.*))?$', line, re.IGNORECASE)
         if m:
             num = int(m.group(1))
             title = m.group(2) or ''
@@ -66,6 +66,18 @@ def build_mapping(candidates):
             else:
                 mapping.append({'original': line, 'new': f'第{num}章'})
             continue
+
+        # 匹配 "章 N 标题" 格式（无「第」前缀的简式章节号）
+        m = re.match(r'^章\s*(\d+)(?:\s+(.*))?$', line)
+        if m:
+            num = int(m.group(1))
+            title = m.group(2) or ''
+            if title:
+                mapping.append({'original': line, 'new': f'第{num}章 {title}'})
+            else:
+                mapping.append({'original': line, 'new': f'第{num}章'})
+            continue
+
 
         # 匹配 "一、标题" 格式（修复：保留标题）
         m = re.match(r'^([零一二三四五六七八九十百千\d]+)[、．.]\s*(.*)$', line)

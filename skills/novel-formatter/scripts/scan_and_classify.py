@@ -40,7 +40,11 @@ def read_file_safe(file_path):
 
 
 def detect_chapter_format(text):
-    """采样跳过前20行元信息，使用公共正则 CANDIDATE_REGEX"""
+    """采样跳过前20行元信息，统计疑似标题行（短行）中可识别章节格式的比例。
+
+    正文段落通常较长，若把正文长行计入分母，真实小说匹配率会被严重稀释，
+    导致绝大多数书被误判为混乱层而被迫走 AI。因此只统计短行（疑似标题行）。
+    """
     lines = text.splitlines()
     if len(lines) <= 20:
         sample_lines = lines
@@ -56,16 +60,17 @@ def detect_chapter_format(text):
             )
             sample_lines.extend([remaining[i] for i in random_indices])
 
+    short_lines = [l.strip() for l in sample_lines
+                   if l.strip() and len(l.strip()) < 60]
+    if not short_lines:
+        return 0
+
     matched = 0
-    for line in sample_lines:
-        line = line.strip()
-        if len(line) < 2:
-            continue
+    for line in short_lines:
         if CANDIDATE_REGEX.match(line):
             matched += 1
 
-    total = len([l for l in sample_lines if len(l.strip()) >= 2])
-    return matched / max(total, 1)
+    return matched / len(short_lines)
 
 
 def detect_pollution(text):
@@ -135,7 +140,9 @@ def scan_file(file_path, source_path):
 def scan_library(source_dir):
     source_path = Path(source_dir)
     if not source_path.exists():
-        raise FileNotFoundError(f"临时目录不存在: {source_dir}")
+        raise FileNotFoundError(f"临时目录不存在: {source_dir}\n"
+                                f"原因: 可能还没运行 Step 0 转码，或目录名/路径写错\n"
+                                f"建议: 先运行 preprocess_encoding.py 生成临时目录；若已生成，检查 --source 路径是否正确")
 
     files = list(source_path.rglob('*.txt'))
     print(f"发现 {len(files)} 个TXT文件，开始扫描...")

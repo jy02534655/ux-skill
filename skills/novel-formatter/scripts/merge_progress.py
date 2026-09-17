@@ -112,6 +112,8 @@ def main():
     chunks_path = Path(args.chunks_dir)
     if not chunks_path.exists():
         print(f"分块目录不存在: {args.chunks_dir}")
+        print("原因: 还没运行 split_chunks.py，或 --chunks_dir 路径写错")
+        print("建议: 先运行 split_chunks.py 生成分块，或检查 --chunks_dir 是否指向分块输出目录")
         return
 
     if args.status:
@@ -122,7 +124,9 @@ def main():
             return
         chunk_files = list(chunks_path.glob('*part*.txt'))
         if not chunk_files:
-            print(f"未找到分块文件")
+            print("未找到分块文件")
+            print("原因: 分块命名不符合约定（应为 part1.txt、part2.txt ...），或目录是空的")
+            print("建议: 用 split_chunks.py 重新分块（默认前缀 part），或用 --prefix 指定与分块时相同的前缀")
             return
         merge_chunks(chunk_files, Path(args.output), Path(args.progress_dir))
     else:

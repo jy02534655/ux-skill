@@ -7,6 +7,7 @@
 
 import os
 import json
+import shutil
 import time
 from pathlib import Path
 from datetime import datetime
@@ -38,7 +39,9 @@ def _lock_file(lf, exclusive=False):
                 return
             except BlockingIOError:
                 if time.time() - start > LOCK_TIMEOUT:
-                    raise TimeoutError(f"获取锁超时: {lf.name}")
+                    raise TimeoutError(f"获取锁超时: {lf.name}\n"
+                                       f"原因: 进度文件被其他脚本进程占用（常见于窗口未关闭）\n"
+                                       f"建议: 关闭多余的终端窗口后重试；若确认无其他进程，删掉该 .lock 文件再重试")
                 time.sleep(0.1)
     elif HAS_MSVCRT:
         # msvcrt 的 locking 是进程级文件锁，兼容 Windows
@@ -49,7 +52,9 @@ def _lock_file(lf, exclusive=False):
                 return
             except OSError:
                 if time.time() - start > LOCK_TIMEOUT:
-                    raise TimeoutError(f"获取锁超时: {lf.name}")
+                    raise TimeoutError(f"获取锁超时: {lf.name}\n"
+                                       f"原因: 进度文件被其他脚本进程占用（常见于窗口未关闭）\n"
+                                       f"建议: 关闭多余的终端窗口后重试；若确认无其他进程，删掉该 .lock 文件再重试")
                 time.sleep(0.1)
     else:
         # 无锁降级：直接返回，依赖原子写操作
@@ -120,6 +125,12 @@ def save_progress(progress):
     with open(lock_file, 'w') as lf:
         _lock_file(lf, exclusive=True)
         try:
+            # 写新版本前先备份上一版本（备份失败不阻塞保存）
+            if Path(PROGRESS_FILE).exists():
+                try:
+                    shutil.copy2(PROGRESS_FILE, PROGRESS_FILE + '.bak')
+                except OSError:
+                    pass
             temp_file = PROGRESS_FILE + '.tmp'
             with open(temp_file, 'w', encoding='utf-8') as f:
                 json.dump(progress, f, ensure_ascii=False, indent=2)
@@ -175,6 +186,8 @@ def main():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--show', action='store_true', help='显示当前进度')
+    parser.add_argument('--reset', action='store_true', help='强制重置进度（删除进度文件并重新初始化）')
+
     parser.add_argument('--init', action='store_true', help='初始化进度')
     parser.add_argument('--source', default='./NovelLibrary')
     parser.add_argument('--temp', default='./NovelLibrary_Temp')
@@ -187,7 +200,14 @@ def main():
     parser.add_argument('--ai_calls', type=int, help='AI调用次数')
     args = parser.parse_args()
 
-    if args.show:
+    if args.reset:
+        # 清除进度文件及其备份/锁/临时文件，避免用户手动删除
+        for f in [PROGRESS_FILE, PROGRESS_FILE + '.bak', PROGRESS_FILE + '.lock', PROGRESS_FILE + '.tmp']:
+            if Path(f).exists():
+                Path(f).unlink()
+        progress = init_progress(args.source, args.temp, args.output)
+        print(f'进度已重置并重新初始化: {PROGRESS_FILE}')
+    elif args.show:
         progress = get_progress()
         if progress:
             print(json.dumps(progress, ensure_ascii=False, indent=2))

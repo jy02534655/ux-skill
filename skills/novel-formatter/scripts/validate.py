@@ -153,6 +153,8 @@ def validate_all(source_dir, output_dir):
     classification_file = progress_dir / 'classification.json'
     if not classification_file.exists():
         print("未找到分类报告，请先运行 scan_and_classify.py")
+        print("原因: 步骤顺序颠倒，或 --output 目录与扫描时不一致，或进度被重置")
+        print("建议: 先运行 scan_and_classify.py 生成分类报告，并确保 --source/--output 与 Step1/Step2 使用相同路径")
         return
 
     with open(classification_file, 'r', encoding='utf-8') as f:

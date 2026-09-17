@@ -108,24 +108,36 @@ def preprocess_all(source_dir, temp_dir, max_workers=4, force=False):
     source_path = safe_resolve_path(source_dir)
     temp_path = safe_resolve_path(temp_dir)
 
-    # 目录安全检查
+    # 目录安全检查：逐条给出原因与建议，避免用户对着英文堆栈猜测
     if temp_path == source_path:
-        raise ValueError(f"临时目录不能和源目录相同: {temp_dir} == {source_dir}")
+        raise ValueError(f"临时目录不能和源目录相同: {temp_dir} == {source_dir}\n"
+                         f"原因: --temp 与 --source 指向同一目录，清空临时目录会删掉源文件\n"
+                         f"建议: 换一个独立目录，例如 --temp ./NovelLibrary_Temp")
 
     if source_path in temp_path.parents:
-        raise ValueError(f"临时目录不能是源目录的子目录: {temp_dir} 是 {source_dir} 的子目录")
+        raise ValueError(f"临时目录不能是源目录的子目录: {temp_dir} 是 {source_dir} 的子目录\n"
+                         f"原因: 清空临时目录会递归删掉源目录里的内容\n"
+                         f"建议: 将 --temp 放到源目录之外，例如 ./NovelLibrary_Temp")
 
     if temp_path in source_path.parents:
-        raise ValueError(f"临时目录不能是源目录的父目录: {temp_dir} 是 {source_dir} 的父目录")
+        raise ValueError(f"临时目录不能是源目录的父目录: {temp_dir} 是 {source_dir} 的父目录\n"
+                         f"原因: 清空临时目录会波及源目录\n"
+                         f"建议: 将 --temp 设为源目录的平级目录，例如 ./NovelLibrary_Temp")
 
     if temp_path == Path('.').resolve():
-        raise ValueError("临时目录不能是当前工作目录 (.)")
+        raise ValueError("临时目录不能是当前工作目录 (.)\n"
+                         f"原因: 清空临时目录会把当前目录的文件全部删除\n"
+                         f"建议: 换一个专用目录，例如 --temp ./NovelLibrary_Temp")
 
     if temp_path == Path.home().resolve():
-        raise ValueError("临时目录不能是用户主目录")
+        raise ValueError("临时目录不能是用户主目录\n"
+                         f"原因: 清空临时目录会删掉用户目录下的所有内容\n"
+                         f"建议: 换一个专用目录，例如 --temp ./NovelLibrary_Temp")
 
     if not source_path.exists():
-        raise FileNotFoundError(f"源目录不存在: {source_dir}")
+        raise FileNotFoundError(f"源目录不存在: {source_dir}\n"
+                                f"原因: 目录名写错，或小说还没放入该目录\n"
+                                f"建议: 确认目录存在且其中有 .txt 文件（可用 --source 指定其他路径）")
 
     # 清空临时目录
     if temp_path.exists():

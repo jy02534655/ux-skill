@@ -28,7 +28,7 @@ def renumber_chapters(text):
     for idx, match in enumerate(reversed(regular_positions), 1):
         old = match.group(0)
         title_content = re.sub(
-            r'^\s*(?:第[零一二三四五六七八九十百千万]+|\d+)[章回节]\s*',
+            r'^\s*(?:第[零一二三四五六七八九十百千万]+|\d+)[章回节话]\s*',
             '',
             old
         )

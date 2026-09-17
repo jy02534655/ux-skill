@@ -54,14 +54,14 @@ def convert_title(text):
     s = re.sub(r'^[※☆★●◆◇○■□▲△▶►]+[、，,]\s*', '', s)
     s = re.sub(r'^正文\s+', '', s)
 
-    # 1) 第X章/回/节 标题 — 已是标准格式
-    m = re.match(r'^(第\d+[章回节])(.*)', s)
+    # 1) 第X章/回/节/话 标题 — 已是标准格式
+    m = re.match(r'^(第\d+[章回节话])(.*)', s)
     if m:
         ch, rest = m.group(1), m.group(2).strip()
         return f'{ch} {rest}' if rest else ch
 
-    # 2) 第一章/回/节 → 第1章
-    m = re.match(r'^第([零一二三四五六七八九十百千万\d]+)([章回节])(.*)', s)
+    # 2) 第一章/回/节/话 → 第1章
+    m = re.match(r'^第([零一二三四五六七八九十百千万\d]+)([章回节话])(.*)', s)
     if m:
         ns, unit, rest = m.group(1), m.group(2), m.group(3).strip()
         ar = chinese_to_number_simple(ns)
@@ -71,6 +71,18 @@ def convert_title(text):
 
     # 3) Chapter X → 第X章
     m = re.match(r'^Chapter\s*(\d+)(.*)', s, re.IGNORECASE)
+    if m:
+        num, rest = m.group(1), m.group(2).strip()
+        return f'第{num}章 {rest}' if rest else f'第{num}章'
+
+    # 3a) 章 100 → 第100章（无「第」前缀的简式章节号）
+    m = re.match(r'^章\s*(\d+)(.*)', s)
+    if m:
+        num, rest = m.group(1), m.group(2).strip()
+        return f'第{num}章 {rest}' if rest else f'第{num}章'
+
+    # 3b) Section N / Part N → 第N章（英文卷/部分标题）
+    m = re.match(r'^(?:Section|Part)\s*(\d+)(.*)', s, re.IGNORECASE)
     if m:
         num, rest = m.group(1), m.group(2).strip()
         return f'第{num}章 {rest}' if rest else f'第{num}章'
@@ -184,7 +196,10 @@ def batch_process(source_dir, output_dir):
     progress_dir = output / '.organizer_progress'
     regular_list = progress_dir / 'regular_list.json'
     if not regular_list.exists():
-        print("未找到规整层清单"); return
+        print("未找到规整层清单")
+        print("原因: 尚未运行扫描，或清单文件被删除/路径不一致")
+        print("建议: 先运行 scan_and_classify.py 重新生成清单，并确认 --source/--output_dir 与扫描时的路径一致")
+        return
     with open(regular_list, 'r', encoding='utf-8') as f:
         files = json.load(f)
     total = len(files)
